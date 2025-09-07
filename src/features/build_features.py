@@ -114,3 +114,67 @@ def preprocess_product_data(df: pd.DataFrame) -> pd.DataFrame:
     dataset.columns = dataset.columns.str.replace('[^A-Za-z0-9_]+', '', regex=True)
 
     return dataset
+
+# TRAIN TEST SPLIT
+def walk_forward_split(dataset, feature_drop=['Target_Next', 'ProductKey']):
+    cat_editions = sorted(dataset['CatEdition'].unique())
+
+    for cutoff in cat_editions[:-1]:  # leave last edition for unseen future
+        train = dataset[dataset['CatEdition'] <= cutoff]
+        test  = dataset[dataset['CatEdition'] > cutoff]   # changed here
+
+        X_train = train.drop(columns=feature_drop)
+        y_train = train['Target_Next']
+
+        X_test = test.drop(columns=feature_drop)
+        y_test = test['Target_Next']
+
+        # Skip if y_test has only 1 class
+        if y_test.nunique() < 2:
+            print(f"Skipping cutoff {cutoff}: only one class in y_test ({y_test.iloc[0]})")
+            continue
+
+        yield cutoff, X_train, y_train, X_test, y_test
+
+# SCALING
+from sklearn.preprocessing import StandardScaler
+import joblib
+def scale_features(X_train: pd.DataFrame,
+                   X_test: pd.DataFrame) -> tuple:
+    """
+    Convert datetime columns into numeric features and scale all features.
+
+    Parameters
+    ----------
+    X_train : pd.DataFrame
+        Training feature set
+    X_test : pd.DataFrame
+        Testing feature set
+    date_cols : list, optional
+        List of datetime columns to convert (e.g., ['originationDate'])
+
+    Returns
+    -------
+    pd.DataFrame, pd.DataFrame
+        Scaled X_train and X_test as DataFrames
+    """
+    X_train = X_train.copy()
+    X_test = X_test.copy()
+
+
+    # Scale numeric features
+    scaler = StandardScaler()
+    scaled_X_train = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index
+    )
+    scaled_X_test = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index
+    )
+
+    joblib.dump(scaler, "scaler.pkl")
+
+    return scaled_X_train, scaled_X_test
