@@ -1,15 +1,32 @@
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-def preprocess_data(df):
-    """Split and preprocess data."""
-    X = df.drop('target', axis=1)
-    y = df['target']
+import pandas as pd
+def build_product_dataset(df_productdetails: pd.DataFrame,
+                          df_cataloguediscontinuation: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge discount data with product details.
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    Parameters
+    ----------
+    df_productdetails : pd.DataFrame
+        Product details dataset
+    df_cataloguediscontinuation : pd.DataFrame
+        Discount dataset
 
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    Returns
+    -------
+    pd.DataFrame
+        Merged dataset
+    """
 
-    return X_train, X_test, y_train, y_test
+    # Defensive copy
+    df_productdetails = df_productdetails.copy()
+    df_cataloguediscontinuation = df_cataloguediscontinuation.copy()
+
+    # --- Merge discount into product details ---
+    merged = df_productdetails.merge(
+        df_cataloguediscontinuation, on="ProductKey", how="right"
+    )
+
+    return merged
