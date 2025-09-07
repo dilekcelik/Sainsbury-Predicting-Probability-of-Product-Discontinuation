@@ -30,3 +30,87 @@ def build_product_dataset(df_productdetails: pd.DataFrame,
     )
 
     return merged
+
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+def preprocess_product_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preprocess product-week dataset into product+CatEdition level features
+    and labels for discontinuation prediction.
+
+    Steps:
+    1. Aggregate numeric + categorical features at ProductKey+CatEdition level.
+    2. Compute sales slope (trend) from WeeksOut vs ActualsPerWeek (via np.polyfit).
+    3. Create Target_Next (discontinued in next CatEdition).
+    4. Encode categorical/static columns.
+    """
+
+    # --- Define columns ---
+    cat_cols = [
+        "Supplier", "HierarchyLevel1", "HierarchyLevel2",
+        "DIorDOM", "Seasonal", "SpringSummer", "Status"
+    ]
+    num_cols = ["SalePriceIncVAT", "ForecastPerWeek", "ActualsPerWeek"]
+
+    # --- Aggregation functions ---
+    agg_funcs = {col: ['mean', 'min', 'max'] for col in num_cols}
+    for col in cat_cols:
+        agg_funcs[col] = lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0]
+
+    # --- Aggregate features ---
+    features = (
+        df.groupby(['ProductKey', 'CatEdition'])
+          .agg(agg_funcs)
+    )
+    features.columns = [
+        f"{col[0]}_{col[1]}" if isinstance(col, tuple) else col
+        for col in features.columns
+    ]
+    features = features.reset_index()
+
+    # --- Compute SalesSlope (trend) with np.polyfit ---
+    slopes = (
+    df.groupby(['ProductKey', 'CatEdition'])
+      .apply(lambda g: np.polyfit(g['WeeksOut'], g['ActualsPerWeek'], 1)[0]
+             if g['WeeksOut'].nunique() > 1 else 0.0)
+      .reset_index(name="SalesSlope")
+    )
+
+    features = features.merge(slopes, on=['ProductKey', 'CatEdition'], how='left')
+
+    # --- Create labels ---
+    labels = (
+        df.groupby(['ProductKey', 'CatEdition'])['DiscontinuedTF']
+          .max()
+          .reset_index()
+    )
+    labels['Target_Next'] = labels.groupby('ProductKey')['DiscontinuedTF'].shift(-1)
+    labels = labels.drop(columns=['DiscontinuedTF'])
+
+    # --- Merge features + labels ---
+    dataset = features.merge(labels, on=['ProductKey', 'CatEdition'], how='inner')
+    dataset = dataset.dropna(subset=['Target_Next'])
+    dataset['Target_Next'] = dataset['Target_Next'].astype(int)
+
+    # --- Encoding ---
+    # Convert booleans to int
+    for col in ['Seasonal_<lambda>', 'SpringSummer_<lambda>']:
+        if col in dataset.columns:
+            dataset[col] = dataset[col].astype(int)
+
+    # Label encode categorical ID columns
+    encode_cols = [
+        'Supplier_<lambda>', 'HierarchyLevel1_<lambda>', 'HierarchyLevel2_<lambda>',
+        'DIorDOM_<lambda>', 'Status_<lambda>'
+    ]
+    for col in encode_cols:
+        if col in dataset.columns:
+            le = LabelEncoder()
+            dataset[col] = le.fit_transform(dataset[col])
+
+    # --- Clean column names ---
+    dataset = dataset.rename(columns=lambda x: x.replace("<lambda>", "mode"))
+    dataset.columns = dataset.columns.str.replace('[^A-Za-z0-9_]+', '', regex=True)
+
+    return dataset
